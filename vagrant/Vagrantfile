@@ -6,6 +6,8 @@ VAGRANTFILE_API_VERSION = "2"
 
 ENV["LC_ALL"] = "en_US.UTF-8"
 
+proxy = ENV['http_proxy'] || ""
+
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   if ARGV[1] and \
      (ARGV[1].split('=')[0] == "--provider" or ARGV[2])
@@ -17,19 +19,20 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
   if ENV['http_proxy']
     if Vagrant.has_plugin?("vagrant-proxyconf")
-      config.proxy.http     = ENV['http_proxy'] || ""
-      config.proxy.https    = ENV['http_proxy'] || ""
-      config.apt_proxy.http = ENV['http_proxy'] || ""
-      config.apt_proxy.https= ENV['http_proxy'] || ""
-      config.proxy.no_proxy = "localhost,127.0.0.1,.hpecorp.net,github.hpe.com,ci-repo,monitoring-node,app-server-node-1,app-server-node-2,app-server-node-3,app-server-node-4,ci-repo,mongodb-node"
+      config.proxy.http     = proxy
+      config.proxy.https    = proxy
+      config.apt_proxy.http = proxy
+      config.apt_proxy.https= proxy
+      config.proxy.no_proxy = "localhost,127.0.0.1,.hpecorp.net,github.hpe.com,ci-node,monitoring-node,app-server-node-1,app-server-node-2,app-server-node-3,app-server-node-4,ci-repo,mongodb-node"
     end
   end
 
   nodes_config.each do |node|
+
     node_name = node["node"] # name of node
     config.ssh.insert_key = false
     config.ssh.private_key_path = '~/.vagrant.d/insecure_private_key'
-    
+
 
 
     # For each node
@@ -45,11 +48,13 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       config.vm.hostname = node['hostname']
       config.vm.network :private_network, ip: node['ip']
 
-      config.vm.synced_folder "provision", "/provision"
-      config.vm.box = 'bento/ubuntu-16.04'
 
-      if provider=="virtualbox"
+      # config.vm.box = 'bento/ubuntu-16.04'
+
+      if provider==:virtualbox
+        puts "provider= #{provider}"
         config.vm.box = 'bento/ubuntu-16.04'
+        config.vm.synced_folder "provision", "/provision"
         config.vm.provider :virtualbox do |vb, override|
           vb.customize ["modifyvm", :id, "--memory", node['memory']]
           vb.customize ["modifyvm", :id, "--name", node['node']]
@@ -59,9 +64,10 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
         end
       end
 
-      if provider=="libvirt"
+      if provider==:libvirt
         puts "provider= #{provider}"
-        config.vm.box = 'bento/ubuntu-16.04'
+        config.vm.box = 'peru/ubuntu-16.04-server-amd64'
+        config.vm.synced_folder "provision", "/provision" , type: "rsync"
         config.vm.provider :libvirt do |vb, override|
           vb.memory = node['memory']
           vb.cpus = node['cpus'] || 2
@@ -72,6 +78,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       end
 
       if provider=="azure"
+        config.vm.synced_folder "provision", "/provision"
         config.vm.provider :azure do |azure, override|
           config.vm.box = 'azure'
           azure.vm_image_urn = 'canonical:ubuntuserver:16.04-DAILY-LTS:latest'
@@ -108,13 +115,14 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
         s.inline = "sudo sed -i '/tty/!s/mesg n/tty -s \\&\\& mesg n/' /root/.profile"
       end
 
-      if provider=="libvirt"
-        config.vm.provision :"shell", :inline => "sudo mount -t vboxsf -o uid=1000,gid=1000 vagrant /vagrant"
-        config.vm.provision :"shell", :inline => "sudo mount -t vboxsf -o uid=1000,gid=1000 provision /provision"
+      if provider==:libvirt
+      #  config.vm.provision :"shell", :inline => "sudo mount -t vboxsf -o uid=1000,gid=1000 vagrant /vagrant"
+        # config.vm.provision :"shell", :inline => "sudo mount -t vboxsf -o uid=1000,gid=1000 provision /provision"
       end
 
       config.vm.provision "shell" do |s|
         ansible_limit    = "--limit=" + node['hostname']
+        s.env            = {http_proxy:ENV['http_proxy'], https_proxy:ENV['http_proxy']}
         s.path           = "scripts/provision.sh"
         s.privileged     = false
         s.args           = ["--inventory-file=hosts",
